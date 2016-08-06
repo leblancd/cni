@@ -5,7 +5,7 @@ it can include a DNS configuration from a `resolv.conf` file on the host.
 
 ## Overview
 
-host-local IPAM plugin allocates IPv4 addresses out of a specified address range.
+host-local IPAM plugin allocates IPv4 and/or IPv6 addresses out of a specified address range.
 It stores the state locally on the host filesystem, therefore ensuring uniqueness of IP addresses on a single host.
 
 ## Example configurations
@@ -31,7 +31,7 @@ IPv4:
 IPv6:
 ```json
 {
-  "ipam": {
+	"ipam": {
 		"type": "host-local",
 		"subnet": "3ffe:ffff:0:01ff::/64",
 		"rangeStart": "3ffe:ffff:0:01ff::0010",
@@ -40,6 +40,56 @@ IPv6:
 			{ "dst": "3ffe:ffff:0:01ff::1/64" }
 		],
 		"resolvConf": "/etc/resolv.conf"
+	}
+}
+```
+
+IPv4 + IPv6 (Dual Stack):
+```json
+{
+	"ipam": {
+		"type": "host-local",
+		"subnets": [
+			{
+				"cidr":       "10.0.5.0/24",
+				"rangeStart": "10.0.5.20",
+				"rangeEnd":   "10.0.5.200"
+			},
+			{
+				"cidr":       "2001:db8::0/64",
+				"rangeStart": "2001:db8::100",
+				"rangeEnd":   "2001:db8::f000"
+			}
+		],
+		"routes": [
+			{ "dst": "2001:db8::1/64" }
+		],
+		"resolvConf": "/etc/resolv.conf"
+	}
+}
+```
+
+Dual Stack with Request for Specific IPs:
+```json
+{
+	"ipam": {
+		"type": "host-local",
+		"subnets": [
+			{"cidr": "10.1.2.0/24"},
+			{"cidr": "fd00:1234::0/64"}
+		],
+		"routes": [
+			{ "dst": "fd00:1234::1/64" }
+		],
+		"resolvConf": "/etc/resolv.conf"
+	},
+	"args": {
+		"cni": {
+			"ips": [
+				"10.1.2.20",
+				"fd00:1234::1000"
+			]
+		}
 	}
 }
 ```
@@ -63,13 +113,17 @@ $ echo '{ "name": "default", "ipam": { "type": "host-local", "subnet": "203.0.11
 ## Network configuration reference
 
 * `type` (string, required): "host-local".
-* `subnet` (string, required): CIDR block to allocate out of.
+* `subnet` (string, required if subnets not included): CIDR block to allocate out of.
+* `subnets` (string, required if subnet not included): list of subnet blocks to allocate out of, where each subnet block is defined with a `cidr` and optionally `rangeStart`, `rangeEnd`, and `gateway`.
+* `cidr` (string, required): CIDR block to allocate out of, used in `subnets` configuration.
 * `rangeStart` (string, optional): IP inside of "subnet" from which to start allocating addresses. Defaults to ".2" IP inside of the "subnet" block.
 * `rangeEnd` (string, optional): IP inside of "subnet" with which to end allocating addresses. Defaults to ".254" IP inside of the "subnet" block.
 * `gateway` (string, optional): IP inside of "subnet" to designate as the gateway. Defaults to ".1" IP inside of the "subnet" block.
 * `routes` (string, optional): list of routes to add to the container namespace. Each route is a dictionary with "dst" and optional "gw" fields. If "gw" is omitted, value of "gateway" will be used.
 * `resolvConf` (string, optional): Path to a `resolv.conf` on the host to parse and return as the DNS configuration
 * `dataDir` (string, optional): Path to a directory to use for maintaining state, e.g. which IPs have been allocated to which containers
+* `ip` (string, optional): request a specific IP address from the subnet. If it's in one of the subnets, but not available, the plugin will exit with an error
+* `ips` (string, optional): request for a list of IP addresses to be allocated from the subnets. If it's in one of the subnets, but not available, the plugin will exit with an error
 
 
 ## Supported arguments

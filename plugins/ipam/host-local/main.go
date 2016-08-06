@@ -15,6 +15,9 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/containernetworking/cni/plugins/ipam/host-local/backend/allocator"
 	"github.com/containernetworking/cni/plugins/ipam/host-local/backend/disk"
 
@@ -29,58 +32,89 @@ func main() {
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
-	ipamConf, confVersion, err := allocator.LoadIPAMConfig(args.StdinData, args.Args)
+	ipamConf, confVersion, netName, err := allocator.LoadIPAMConfig(args.StdinData, args.Args)
 	if err != nil {
 		return err
 	}
 
 	result := &current.Result{}
 
-	if ipamConf.ResolvConf != "" {
-		dns, err := parseResolvConf(ipamConf.ResolvConf)
+	// Generate allocator for each configured subnet
+	var allocators []*allocator.IPAllocator
+	for _, subnet := range ipamConf.Subnets {
+		subdir := allocator.SubnetNameStr(netName, subnet)
+		store, err := disk.New(subdir, ipamConf.DataDir)
 		if err != nil {
 			return err
 		}
-		result.DNS = *dns
+		defer store.Close()
+
+		allocator, err := allocator.NewIPAllocator(ipamConf, subnet, store)
+		if err != nil {
+			return err
+		}
+
+		if ipamConf.ResolvConf != "" {
+			dns, err := parseResolvConf(ipamConf.ResolvConf)
+			if err != nil {
+				return err
+			}
+			result.DNS = *dns
+		}
+
+		allocators = append(allocators, allocator)
 	}
 
-	store, err := disk.New(ipamConf.Name, ipamConf.DataDir)
-	if err != nil {
-		return err
+	// Allocate IP(s)
+	for index, allocator := range allocators {
+		ipConf, routes, err := allocator.Get(args.ContainerID)
+		if err != nil {
+			// Roll back on failure: Release any IPs that
+			// were just allocated.
+			for i := 0; i < index; i++ {
+				allocators[i].Release(args.ContainerID)
+			}
+			return err
+		}
+		result.IPs = append(result.IPs, ipConf)
+		result.Routes = append(result.Routes, routes...)
 	}
-	defer store.Close()
-
-	allocator, err := allocator.NewIPAllocator(ipamConf, store)
-	if err != nil {
-		return err
-	}
-
-	ipConf, routes, err := allocator.Get(args.ContainerID)
-	if err != nil {
-		return err
-	}
-	result.IPs = []*current.IPConfig{ipConf}
-	result.Routes = routes
 
 	return types.PrintResult(result, confVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	ipamConf, _, err := allocator.LoadIPAMConfig(args.StdinData, args.Args)
+	ipamConf, _, netName, err := allocator.LoadIPAMConfig(args.StdinData, args.Args)
 	if err != nil {
 		return err
 	}
 
-	store, err := disk.New(ipamConf.Name, ipamConf.DataDir)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
+	// Release IP for each configured subnet, keeping a list of
+	// any errors encountered.
+	var errors []string
+	for _, subnet := range ipamConf.Subnets {
+		subdir := allocator.SubnetNameStr(netName, subnet)
+		store, err := disk.New(subdir, ipamConf.DataDir)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		defer store.Close()
 
-	ipAllocator, err := allocator.NewIPAllocator(ipamConf, store)
-	if err != nil {
-		return err
+		allocator, err := allocator.NewIPAllocator(ipamConf, subnet, store)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+
+		err = allocator.Release(args.ContainerID)
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
 
-	return ipAllocator.Release(args.ContainerID)
+	if errors != nil {
+		return fmt.Errorf(strings.Join(errors, ","))
+	}
+	return nil
 }

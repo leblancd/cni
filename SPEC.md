@@ -197,12 +197,39 @@ Plugins may define additional fields that they accept and may generate an error 
   "bridge": "cni0",
   "ipam": {
     "type": "host-local",
-    // ipam specific
+    // ipam specific, single subnet
     "subnet": "10.1.0.0/16",
     "gateway": "10.1.0.1"
   },
   "dns": {
     "nameservers": [ "10.1.0.1" ]
+  }
+}
+```
+
+```json
+{
+  "cniVersion": "0.3.1",
+  "name": "dbnet",
+  "type": "bridge",
+  // type (plugin) specific
+  "bridge": "cni0",
+  "ipam": {
+    "type": "host-local",
+    // ipam specific, multiple subnets (dual stack)
+    "subnets": [
+      {
+        "cidr": "10.1.0.0/16",
+        "gateway": "10.1.0.1"
+      },
+      {
+        "cidr": "2001:db8::0/64",
+        "gateway": "2001:db8::1"
+      }
+    ]
+  },
+  "dns": {
+    "nameservers": [ "10.1.0.1", "2001:4860:4860::8888"]
   }
 }
 ```
