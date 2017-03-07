@@ -41,6 +41,7 @@ var _ = Describe("Link", func() {
 		ifaceFormatString string = "i%d"
 		mtu               int    = 1400
 		ip4onehwaddr             = "0a:58:01:01:01:01"
+		ip6onehwaddr             = "6a:58:12:34:56:78"
 	)
 	var (
 		hostNetNS         ns.NetNS
@@ -53,6 +54,8 @@ var _ = Describe("Link", func() {
 
 		ip4one             = net.ParseIP("1.1.1.1")
 		ip4two             = net.ParseIP("1.1.1.2")
+		ip6one             = net.ParseIP("fed0::1234:5678")
+		ip6two             = net.ParseIP("fed0::1234:5679")
 		originalRandReader = rand.Reader
 	)
 
@@ -222,38 +225,123 @@ var _ = Describe("Link", func() {
 
 	It("SetHWAddrByIP must change the interface hwaddr and be predictable", func() {
 
-		_ = containerNetNS.Do(func(ns.NetNS) error {
-			defer GinkgoRecover()
+		testCases := []struct {
+			ip4            net.IP
+			ip6            net.IP
+			expectedhwaddr string
+		}{
+			{
+				// IPv4-only
+				ip4:            ip4one,
+				ip6:            nil,
+				expectedhwaddr: ip4onehwaddr,
+			},
+			{
+				// IPv6-only
+				ip4:            nil,
+				ip6:            ip6one,
+				expectedhwaddr: ip6onehwaddr,
+			},
+			{
+				// Dual-Stack
+				ip4:            ip4one,
+				ip6:            ip6one,
+				expectedhwaddr: ip4onehwaddr,
+			},
+		}
+		for _, tc := range testCases {
+			_ = containerNetNS.Do(func(ns.NetNS) error {
+				defer GinkgoRecover()
 
-			var err error
-			hwaddrBefore := getHwAddr(containerVethName)
+				var err error
+				hwaddrBefore := getHwAddr(containerVethName)
 
-			err = ip.SetHWAddrByIP(containerVethName, ip4one, nil)
-			Expect(err).NotTo(HaveOccurred())
-			hwaddrAfter1 := getHwAddr(containerVethName)
+				err = ip.SetHWAddrByIP(containerVethName, tc.ip4, tc.ip6)
+				Expect(err).NotTo(HaveOccurred())
+				hwaddrAfter1 := getHwAddr(containerVethName)
 
-			Expect(hwaddrBefore).NotTo(Equal(hwaddrAfter1))
-			Expect(hwaddrAfter1).To(Equal(ip4onehwaddr))
+				Expect(hwaddrBefore).NotTo(Equal(hwaddrAfter1))
+				Expect(hwaddrAfter1).To(Equal(tc.expectedhwaddr))
 
-			return nil
-		})
+				return nil
+			})
+		}
 	})
 
 	It("SetHWAddrByIP must be injective", func() {
 
-		_ = containerNetNS.Do(func(ns.NetNS) error {
-			defer GinkgoRecover()
+		testCases := []struct {
+			ip4first  net.IP
+			ip6first  net.IP
+			ip4second net.IP
+			ip6second net.IP
+		}{
+			{
+				ip4first:  ip4one,
+				ip6first:  nil,
+				ip4second: ip4two,
+				ip6second: nil,
+			},
+			{
+				ip4first:  nil,
+				ip6first:  ip6one,
+				ip4second: nil,
+				ip6second: ip6two,
+			},
+		}
+		for _, tc := range testCases {
+			_ = containerNetNS.Do(func(ns.NetNS) error {
+				defer GinkgoRecover()
 
-			err := ip.SetHWAddrByIP(containerVethName, ip4one, nil)
-			Expect(err).NotTo(HaveOccurred())
-			hwaddrAfter1 := getHwAddr(containerVethName)
+				err := ip.SetHWAddrByIP(containerVethName, tc.ip4first, tc.ip6first)
+				Expect(err).NotTo(HaveOccurred())
+				hwaddrAfter1 := getHwAddr(containerVethName)
 
-			err = ip.SetHWAddrByIP(containerVethName, ip4two, nil)
-			Expect(err).NotTo(HaveOccurred())
-			hwaddrAfter2 := getHwAddr(containerVethName)
+				err = ip.SetHWAddrByIP(containerVethName, tc.ip4second, tc.ip6second)
+				Expect(err).NotTo(HaveOccurred())
+				hwaddrAfter2 := getHwAddr(containerVethName)
 
-			Expect(hwaddrAfter1).NotTo(Equal(hwaddrAfter2))
-			return nil
-		})
+				Expect(hwaddrAfter1).NotTo(Equal(hwaddrAfter2))
+				return nil
+			})
+		}
+	})
+
+	It("SetHWAddrByIP requires either valid IPv4 or valid IPv6", func() {
+
+		// Create invalid 3-octet and 15-octet IP addresses
+		ip4bad := ip4one[1:]
+		ip6bad := ip6one[1:]
+
+		testCases := []struct {
+			ip4 net.IP
+			ip6 net.IP
+		}{
+			{
+				// Invalid IPv4-only
+				ip4: ip4bad,
+				ip6: nil,
+			},
+			{
+				// Invalid IPv6-only
+				ip4: nil,
+				ip6: ip6bad,
+			},
+			{
+				// Dual-Stack, both invalid
+				ip4: ip4bad,
+				ip6: ip6bad,
+			},
+		}
+		for _, tc := range testCases {
+			_ = containerNetNS.Do(func(ns.NetNS) error {
+				defer GinkgoRecover()
+
+				err := ip.SetHWAddrByIP(containerVethName, tc.ip4, tc.ip6)
+				Expect(err).To(HaveOccurred())
+
+				return nil
+			})
+		}
 	})
 })

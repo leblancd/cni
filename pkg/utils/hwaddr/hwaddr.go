@@ -20,33 +20,34 @@ import (
 )
 
 const (
-	ipRelevantByteLen      = 4
-	PrivateMACPrefixString = "0a:58"
+	ipRelevantByteLen       = 4
+	PrivateMACPrefixString  = "0a:58"
+	PrivateMACPrefixString6 = "6a:58"
 )
 
 var (
 	// private mac prefix safe to use
-	PrivateMACPrefix = []byte{0x0a, 0x58}
+	PrivateMACPrefix  = []byte{0x0a, 0x58}
+	PrivateMACPrefix6 = []byte{0x6a, 0x58}
 )
 
-type SupportIp4OnlyErr struct{ msg string }
+type InvalidIPLengthErr struct{ msg string }
 
-func (e SupportIp4OnlyErr) Error() string { return e.msg }
-
-type MacParseErr struct{ msg string }
-
-func (e MacParseErr) Error() string { return e.msg }
+func (e InvalidIPLengthErr) Error() string { return e.msg }
 
 type InvalidPrefixLengthErr struct{ msg string }
 
 func (e InvalidPrefixLengthErr) Error() string { return e.msg }
 
-// GenerateHardwareAddr4 generates 48 bit virtual mac addresses based on the IP4 input.
-func GenerateHardwareAddr4(ip net.IP, prefix []byte) (net.HardwareAddr, error) {
+// GenerateHardwareAddr generates 48 bit virtual mac addresses based on either
+// IPv4 or IPv6 addresses.
+func GenerateHardwareAddr(ip net.IP, prefix []byte) (net.HardwareAddr, error) {
 	switch {
 
-	case ip.To4() == nil:
-		return nil, SupportIp4OnlyErr{msg: "GenerateHardwareAddr4 only supports valid IPv4 address as input"}
+	case ip.To4() == nil && ip.To16() == nil:
+		return nil, InvalidIPLengthErr{msg: fmt.Sprintf(
+			"Invalid IP length: %s", ip.String()),
+		}
 
 	case len(prefix) != len(PrivateMACPrefix):
 		return nil, InvalidPrefixLengthErr{msg: fmt.Sprintf(
